@@ -34,20 +34,24 @@ from Cocoa import (
 from Quartz import (
     CGEventCreateMouseEvent,
     CGEventPost,
+    CGEventGetLocation,  # Add this
+    CGEventCreate,       # Add this
     kCGEventMouseMoved,
     kCGEventLeftMouseDown,
     kCGEventLeftMouseUp,
     kCGEventRightMouseDown,
     kCGEventRightMouseUp,
     kCGHIDEventTap,
-    CGPoint
+    CGPoint,
+    kCGMouseButtonLeft,
+    kCGMouseButtonRight
 )
 import sys
 
 # Third-party imports
 import aiofiles
 import pillow_heif
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageGrab
 
 # Register HEIF opener
 pillow_heif.register_heif_opener()
@@ -409,7 +413,7 @@ IF YOU CAN NOT FULFILL THE USERS TASK, RETURN <x1>0</x1> <y1>0</y1> <x2>0</x2> <
 <thinking>
 """
 
-def parse_coords(xml_string):
+def parse_coords_rect(xml_string):
     # Extract x and y values
     x1_match = re.search(r'<x1>(\d+)', xml_string)
     y1_match = re.search(r'<y1>(\d+)', xml_string)
@@ -424,6 +428,18 @@ def parse_coords(xml_string):
         return x1, y1, x2, y2
     else:
         return None, None, None, None
+
+def parse_coords(xml_string):
+    # Extract x and y values
+    x_match = re.search(r'<x>(\d+)', xml_string)
+    y_match = re.search(r'<y>(\d+)', xml_string)
+
+    if x_match and y_match:
+        x = int(x_match.group(1))
+        y = int(y_match.group(1))
+        return x, y
+    else:
+        return None, None
 
 def plot_rect_on_image(image_path, x1, y1, x2, y2):
     # Open the image
@@ -534,9 +550,71 @@ class OverlayWindow(QMainWindow):
 #         # Wait 1 second before next iteration
 #         await asyncio.sleep(1)
 
+def move_mouse_to(x: int, y: int, should_click: bool = False, right_click: bool = False):
+    """
+    Moves the mouse cursor to specified coordinates and optionally clicks.
+    
+    Args:
+        x (int): Target x coordinate
+        y (int): Target y coordinate 
+        should_click (bool): Whether to perform a click after moving
+        right_click (bool): If clicking, whether to right click instead of left click
+    """
+    # Create CGPoint for target coordinates
+    point = CGPoint(x=x, y=y)
+    
+    # Get current mouse location
+    current = CGEventGetLocation(CGEventCreate(None))
+    
+    # Create mouse movement event
+    move_event = CGEventCreateMouseEvent(
+        None, 
+        kCGEventMouseMoved,
+        point,
+        kCGMouseButtonLeft
+    )
+    
+    # Post the movement event
+    CGEventPost(kCGHIDEventTap, move_event)
+    
+    if should_click:
+        # Create mouse click events
+        if right_click:
+            down_event = CGEventCreateMouseEvent(
+                None,
+                kCGEventRightMouseDown,
+                point, 
+                kCGMouseButtonRight
+            )
+            up_event = CGEventCreateMouseEvent(
+                None,
+                kCGEventRightMouseUp,
+                point,
+                kCGMouseButtonRight
+            )
+        else:
+            down_event = CGEventCreateMouseEvent(
+                None,
+                kCGEventLeftMouseDown,
+                point,
+                kCGMouseButtonLeft
+            )
+            up_event = CGEventCreateMouseEvent(
+                None,
+                kCGEventLeftMouseUp,
+                point,
+                kCGMouseButtonLeft
+            )
+            
+        # Post the click events
+        CGEventPost(kCGHIDEventTap, down_event)
+        time.sleep(0.1)  # Small delay between down and up
+        CGEventPost(kCGHIDEventTap, up_event)
+
 # What should the Caitlyn do next here? Consider the current ability cooldowns, the health of Caitlyn and nearby enemies, etc.
 if __name__ == "__main__":
-    output_image = "invoice.pdf"
+    # output_image = "invoice.pdf"
+    output_image = "screen.png"
 
     # Add near the start of main()
     Path("./dataset").mkdir(exist_ok=True)
@@ -545,40 +623,36 @@ if __name__ == "__main__":
     sct = mss()
 
     async def main():
-        # while True:
+        while True:
             # Take a screenshot
-            # screenshot = ImageGrab.grab()
+            screenshot = ImageGrab.grab()
 
             # # Capture the primary monitor
-            # monitor = sct.monitors[1]  # Primary monitor
-            # screenshot = sct.grab(monitor)
+            monitor = sct.monitors[1]  # Primary monitor
+            screenshot = sct.grab(monitor)
 
             # # Convert to PIL Image
-            # img = Image.frombytes('RGB', screenshot.size, screenshot.rgb)
+            img = Image.frombytes('RGB', screenshot.size, screenshot.rgb)
             
             # # Save the screenshot
             path = str(Path(f"./dataset/{output_image}"))
-            # img.save(path)
+            img.save(path)
 
             # path = str(Path(f"./dataset/{output_image}"))
             # screenshot.save(path)
 
             try:
                 o = await claude(
-                    prompt_rect("bank details"),
+                    prompt("Blue Buff, as denoted with the numbers above its HP bar. Click slightly underneath here to correctly click on the blue buff."),
                     path,
                     temperature=0.0
                 )
                 print(o)
-                x1, y1, x2, y2 = parse_coords(o)
-                x1 *= 2
-                y1 *= 2
-                x2 *= 2
-                y2 *= 2
-                # if x is not None and y is not None:
-                #     move_mouse_to(x, y, should_click=True, right_click=True)
+                x, y = parse_coords(o)
+                if x is not None and y is not None:
+                    move_mouse_to(x, y, should_click=True, right_click=True)
 
-                plot_rect_on_image(f"./dataset/{output_image}_page_1.jpg_processed.jpg", x1, y1, x2, y2)
+                # plot_rect_on_image(f"./dataset/{output_image}_page_1.jpg_processed.jpg", x1, y1, x2, y2)
             except Exception as e:
                 print(f"Error: {e}")
 
